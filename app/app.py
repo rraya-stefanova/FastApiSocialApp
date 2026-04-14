@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
 from sqlalchemy import select
 from app.images import imagekit
-from imagekitio.models.UploadFileRequestOptions import UploadFileRequestOptions
 import os
 import shutil
 import uuid
@@ -33,28 +32,29 @@ async def upload_file(file: UploadFile = File(...),
     temp_file_path = None
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splittext(file.filename)[1]) as tmp_dir:
-            temp_file_path = tmp_file.name
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+            temp_file_path = temp_file.name
             shutil.copyfileobj(file.file, temp_file)
-        upload_result = imagekit.upload_file(
-            file=open(temp_file_path, "rb"),
-            file_name=file.filename,
-            options=UploadFileRequestOptions(
+        with open(temp_file_path, "rb") as upload_stream:
+            upload_response = imagekit.files.with_raw_response.upload(
+                file=upload_stream,
+                file_name=file.filename,
                 use_unique_file_name=True,
-                tags=["backend_upload"]
+                tags=["backend_upload"],
             )
-        )
-        if upload_result.response.http_status_code == 200:
+        if upload_response.status_code == 200:
+            upload_result = upload_response.parse()
             post = Post(
                 caption=caption,
-                url="dummy url",
-                file_type="photo",
-                file_name="dummy name"
+                url=upload_result.url,
+                file_type="video" if upload_result.file_type.startswith("video") else "image",
+                file_name=upload_result.name,
             )
             session.add(post)
             await session.commit()
             await session.refresh(post)
             return post
+        raise HTTPException(status_code=502, detail="Image upload failed")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
